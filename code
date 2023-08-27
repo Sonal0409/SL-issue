@@ -1,0 +1,258 @@
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service
+  namespace: testing
+spec:
+  selector:
+      app: mysql
+      tier: backend
+  ports:
+    - port: 3306
+
+# Persistent Volume for MQSQL
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv2-hp-nfs
+  namespace: testing
+  labels:
+    type: local
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  mountOptions:
+    - hard
+    - nfsvers=4
+  nfs:
+    path: /mnt/nfs_share
+    server: 172.31.52.96
+    
+# Persistent Volume Claim for MQSQL
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pv2-hp-nfs
+  namespace: testing
+  labels:
+    app: mysql
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+      
+# ConfigMap for Wordpress
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysqlcm
+  namespace: testing
+data:
+ MQSQL_DATABASE: wordpress
+      
+# Secret for MQSQL
+
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysqlsec
+  namespace: testing
+type: Opaque
+data:
+  password: cGFzc3dvcmQK
+  
+# Deployment for MQSQL
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: testing
+  labels:
+    app: mysql
+    tier: backend
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+      tier: backend
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: mysql
+        tier: backend
+    spec:
+      containers:
+      - image: mysql
+        name: mysql
+        env:
+          - name: MQSQL_DATABASE
+            value: mysqlcm
+          - name: MYSQL_ROOT_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: mysqlsec
+                key: password
+        volumeMounts:
+          - name: mqsql-persistent-storage
+            mountPath: /var/lib/mysql
+      volumes:
+          - name: mqsql-persistent-storage
+            persistentVolumeClaim:
+              claimName: pv2-hp-nfs
+      nodeSelector:
+        disk_fs: nfs_fs
+
+
+
+# Service for Wordpress
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-service
+  namespace: testing
+spec:
+  type: NodePort
+  selector:
+      app: wordpress
+      tier: frontend
+  ports:
+    - port: 80
+
+# Persistent Volume for Wordpress
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv1-hp
+  namespace: testing
+  labels:
+    type: local
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany        # ReadWriteOnce
+  hostPath:
+    path: "/mnt/data"
+
+# Persistent Volume Claim for Wordpress
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wp-pv-claim
+  namespace: testing
+  labels:
+    app: wordpress
+spec:
+  accessModes:
+    - ReadWriteMany       # ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+      
+# ConfigMap for Wordpress
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wpcm
+  namespace: testing
+data:
+  WORDPRESS_DB_HOST: wordpress
+  WORDPRESS_DB_USER: root
+  WORDPRESS_DB_NAME: database1
+
+# Secret for Wordpress
+
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wpsec
+  namespace: testing
+type: Opaque
+data:
+  password: cGFzc3dvcmQK
+  
+# Deployment for Wordpress
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  namespace: testing
+  labels:
+    app: wordpress
+    tier: frontend
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: frontend
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: frontend
+    spec:
+      containers:
+      - image: wordpress
+        name: wordpress
+        envFrom:
+        - configMapRef:
+            name: wpcm
+        env:
+          - name: WORDPRESS_DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: wpsec
+                key: password
+        volumeMounts:
+          - name: wordpress-persistent-storage
+            mountPath: /var/www/html
+      volumes:
+          - name: wordpress-persistent-storage
+            persistentVolumeClaim:
+              claimName: wp-pv-claim
+      nodeSelector:
+        disk_fs: nfs_fs
